@@ -1,5 +1,10 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+attention_mechanism/__pycache__/
+random_forest/__pycache__/
+/attention_mechanism/__pycache__/
+/random_forest/__pycache__/
+
 *.py[cod]
 *$py.class
 
