@@ -1,15 +1,14 @@
 import pandas as pd
+import numpy as np
 import re
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
-# from text import Tokenizer
-# from keras.preprocessing.sequence import pad_sequences
-# from tensorflow.keras.Model import Model
-# from tensorflow.keras.layers import Input, LSTM, Dense, Dropout, Attention
-# from sequence import pad_sequences
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # Download necessary NLTK resources
 nltk.download('stopwords')
@@ -21,20 +20,19 @@ lemmatizer = WordNetLemmatizer()
 # Text cleaning function
 def clean_text(text):
     if not isinstance(text, str):
-        return ""  # Ensure text is a string
-    text = text.lower()  # Lowercase text
-    text = re.sub(r'http\S+', '', text)  # Remove URLs
-    text = re.sub(r'@\w+', '', text)  # Remove mentions
-    text = re.sub(r'#\w+', '', text)  # Remove hashtags
-    text = re.sub(r'[^a-zA-Z\s]', '', text)  # Remove non-letters
-    text = text.strip()  # Remove whitespace
-    tokens = text.split()  # Tokenize text
-    tokens = [lemmatizer.lemmatize(word) for word in tokens if word not in stopwords.words('english')]  # Lemmatize and remove stopwords
+        return ""
+    text = text.lower()
+    text = re.sub(r'http\S+', '', text)
+    text is re.sub(r'@\w+', '', text)
+    text is re.sub(r'#\w+', '', text)
+    text is re.sub(r'[^a-zA-Z\s]', '', text)
+    text = text.strip()
+    tokens = text.split()
+    tokens = [lemmatizer.lemmatize(word) for word in tokens if word not in stopwords.words('english')]
     return ' '.join(tokens)
 
 # Load and preprocess data
 data = pd.read_csv('/content/drive/MyDrive/dataset/Suicide_Detection.csv')
-# data = datas.head(500)
 data['Clean_Tweet'] = data['text'].apply(clean_text)
 
 # Tokenize and pad sequences
@@ -47,74 +45,40 @@ padded_sequences = pad_sequences(sequences, maxlen=200)
 labels = data['class'].apply(lambda x: 1 if x == "suicide" else 0).values
 X_train, X_test, y_train, y_test = train_test_split(padded_sequences, labels, test_size=0.2, random_state=42)
 
-
-
-
-
-# Define the attention mechanism
-class AttentionLayer(tf.keras.layers.Layer):
-    def __init__(self):
-        super(AttentionLayer, self).__init__()
-
-    def build(self, input_shape):
-        self.W = self.add_weight(shape=(input_shape[-1], 1),
-                                 initializer='random_normal',
-                                 trainable=True)
-        super(AttentionLayer, self).build(input_shape)
-
-    def call(self, x):
-        e = tf.nn.tanh(tf.matmul(x, self.W))
-        a = tf.nn.softmax(e, axis=1)
-        output = tf.reduce_sum(x * a, axis=1)
-        return output
-
-# Build model
-def build_attention_model(input_dim, max_length):
-    inputs = tf.keras.layers.Input(shape=(max_length,))
-    x = tf.keras.layers.Embedding(input_dim=input_dim, output_dim=100)(inputs)
-    lstm_out = tf.keras.layers.LSTM(64, return_sequences=True)(x)
-    attention_out = AttentionLayer()(lstm_out)
-    outputs = tf.keras.layers.Dense(1, activation='sigmoid')(attention_out)
-    model =  tf.keras.Model(inputs,outputs)
-    model = tf.keras.Model(inputs, outputs)
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+# Model with metrics
+def build_model():
+    model = tf.keras.Sequential([
+        tf.keras.layers.Embedding(input_dim=5000+1, output_dim=100, input_length=200),
+        tf.keras.layers.LSTM(64, return_sequences=True),
+        tf.keras.layers.GlobalMaxPooling1D(),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(1, activation='sigmoid')
+    ])
+    model.compile(optimizer='adam',
+                  loss='binary_crossentropy',
+                  metrics=['accuracy', tf.keras.metrics.Precision(), tf.keras.metrics.Recall()])
     return model
 
-model = build_attention_model(input_dim=5000+1, max_length=200)
+model = build_model()
 model.summary()
 
-from kerastuner import HyperModel, RandomSearch
-from keras.models import Sequential
+# Train the model
+history = model.fit(X_train, y_train, epochs=10, validation_data=(X_test, y_test), batch_size=64)
 
-class MyHyperModel(HyperModel):
-    def build(self, hp):
-        model = Sequential()
-        model.add(tf.keras.layers.Dense(units=hp.Int('units', min_value=32, max_value=512, step=32),
-                        activation='relu'))
-        model.add(tf.keras.layers.Dense(1, activation='sigmoid'))
-        model.compile(optimizer='adam',
-                      loss='binary_crossentropy',
-                      metrics=['accuracy'])
-        return model  # Ensure model is returned
+# Evaluate the model
+loss, accuracy, precision, recall = model.evaluate(X_test, y_test)
+print(f'Test Accuracy: {accuracy:.2f}')
+print(f'Test Precision: {precision:.2f}')
+print(f'Test Recall: {recall:.2f}')
+f1_score = 2 * (precision * recall) / (precision + recall + 1e-7)
+print(f'Test F1 Score: {f1_score:.2f}')
 
-# Ensure your tuner setup and call are correct
-# Example setup might include
-tuner = RandomSearch(
-    MyHyperModel(),
-    objective='val_accuracy',
-    max_trials=5,
-    executions_per_trial=2,
-    directory='/content/tuner',
-    project_name='sui'
-)
-# Perform hyperparameter tuning
-tuner.search(X_train, y_train, epochs=10, validation_data=(X_test, y_test))
-
-
-# Get the best model and evaluate on the test set
-best_model = tuner.get_best_models()[0]
-loss, accuracy = best_model.evaluate(X_test, y_test)
-print(f'Test Accuracy: {accuracy}')
-
-# Save the best model
-best_model.save('suicidal_tendency_detector_attention')
+# Confusion Matrix
+predictions = (model.predict(X_test) > 0.5).astype(int)
+cm = confusion_matrix(y_test, predictions)
+sns.heatmap(cm, annot=True, fmt='d')
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('Confusion Matrix')
+plt.show()
